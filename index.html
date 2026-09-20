@@ -79,16 +79,16 @@
 
   #sheet{
     position:absolute; inset:0;
-    display:grid;
-    grid-template-columns:repeat(auto-fill, minmax(var(--cell,44px), 1fr));
-    grid-auto-rows:var(--cell,44px);
-    padding:8px; gap:0;
-    overflow-y:auto; overflow-x:hidden;
-    touch-action:pan-y;
+    overflow:auto;
+    touch-action:auto;
     -webkit-overflow-scrolling:touch;
     scrollbar-width:none;
   }
   #sheet::-webkit-scrollbar{ display:none; }
+
+  #canvas{
+    position:relative;
+  }
 
   .scroll-cue{
     position:absolute; left:50%; bottom:10px; transform:translateX(-50%);
@@ -104,7 +104,7 @@
   }
 
   .bubble{
-    position:relative; margin:auto; width:78%; aspect-ratio:1; border-radius:50%;
+    position:absolute; border-radius:50%;
     transform:rotate(var(--tilt,0deg)) scale(1);
     transform-origin:50% 50%;
     background:
@@ -180,9 +180,9 @@
 </header>
 
 <main>
-  <div id="sheet"></div>
+  <div id="sheet"><div id="canvas"></div></div>
   <div class="hint" id="hint">なぞる・タップで<br>プチッと潰そう</div>
-  <div class="scroll-cue" id="scrollCue"><span>スクロールでもっと広がる</span><span class="arrow">▼</span></div>
+  <div class="scroll-cue" id="scrollCue"><span>スクロールでどこまでも広がる</span><span class="arrow">▼</span></div>
 </main>
 
 <footer>破れても大丈夫。時間が経つとまたプチプチできるようになるよ</footer>
@@ -192,6 +192,7 @@
   "use strict";
 
   var sheet = document.getElementById('sheet');
+  var canvas = document.getElementById('canvas');
   var mainEl = document.querySelector('main');
   var hint = document.getElementById('hint');
   var scrollCue = document.getElementById('scrollCue');
@@ -415,54 +416,116 @@
     SOUND_PRESETS[soundIndex].fn(t, vel);
   }
 
-  // ---- Grid: infinite in both time (popped bubbles re-inflate) and space (scroll spawns more rows) ----
+  // ---- Grid: an absolute-positioned, virtualized 2D plane -----------------
+  // Infinite downward AND rightward. Bubbles are placed by explicit (row,col)
+  // pixel coordinates rather than CSS grid auto-flow, so the rendered layout
+  // can never drift out of sync with the bookkeeping used to trim old cells.
   var CELL = 44;
-  var ROWS_PER_CHUNK = 6;
-  var MAX_BUBBLES = 42 * 16; // trim old rows from the top once the sheet grows past this
-  var bubbles = [];
-  var cols = 1;
+  var BUBBLE_SIZE = Math.round(CELL * 0.78);
+  var BUBBLE_MARGIN = (CELL - BUBBLE_SIZE) / 2;
+  var ROWS_PER_CHUNK = 6, COLS_PER_CHUNK = 4;
+  var MAX_ROWS_CAP = 24, MAX_COLS_CAP = 24;
 
-  function makeBubble(){
+  var minRow = 0, maxRow = -1, minCol = 0, maxCol = -1;
+  var cellMap = Object.create(null);
+
+  function cellKey(r, c){ return r + '_' + c; }
+
+  function addCell(r, c){
     var b = document.createElement('div');
     b.className = 'bubble';
     b.dataset.popped = '0';
+    b.dataset.row = r;
+    b.dataset.col = c;
     var tilt = (Math.random()*10 - 5).toFixed(1);
     b.dataset.tilt = tilt;
     b.style.setProperty('--tilt', tilt + 'deg');
     b.style.setProperty('--hx', (22 + Math.random()*24).toFixed(0) + '%');
     b.style.setProperty('--hy', (16 + Math.random()*24).toFixed(0) + '%');
-    return b;
+    b.style.width = BUBBLE_SIZE + 'px';
+    b.style.height = BUBBLE_SIZE + 'px';
+    b.style.left = ((c - minCol) * CELL + BUBBLE_MARGIN) + 'px';
+    b.style.top = ((r - minRow) * CELL + BUBBLE_MARGIN) + 'px';
+    cellMap[cellKey(r, c)] = b;
+    canvas.appendChild(b);
   }
 
-  function appendRows(rowCount){
-    var frag = document.createDocumentFragment();
-    for(var i=0;i<rowCount*cols;i++){
-      var b = makeBubble();
-      frag.appendChild(b);
-      bubbles.push(b);
-    }
-    sheet.appendChild(frag);
+  function removeCell(r, c){
+    var k = cellKey(r, c);
+    var b = cellMap[k];
+    if(!b) return;
+    if(b._squishAnim) b._squishAnim.cancel();
+    if(b._timer) clearTimeout(b._timer);
+    b.remove();
+    delete cellMap[k];
   }
 
-  function trimTop(){
-    while(bubbles.length > MAX_BUBBLES){
-      var removed = sheet.scrollTop;
-      for(var i=0;i<cols && bubbles.length>0;i++){
-        var b = bubbles.shift();
-        if(b._squishAnim) b._squishAnim.cancel();
-        if(b._timer) clearTimeout(b._timer);
-        b.remove();
-      }
-      sheet.scrollTop = removed - CELL;
+  function updateCanvasBox(){
+    canvas.style.width = ((maxCol - minCol + 1) * CELL) + 'px';
+    canvas.style.height = ((maxRow - minRow + 1) * CELL) + 'px';
+  }
+
+  function growDown(n){
+    for(var r = maxRow+1; r <= maxRow+n; r++){
+      for(var c = minCol; c <= maxCol; c++) addCell(r, c);
     }
+    maxRow += n;
+    updateCanvasBox();
+  }
+
+  function growRight(n){
+    for(var c = maxCol+1; c <= maxCol+n; c++){
+      for(var r = minRow; r <= maxRow; r++) addCell(r, c);
+    }
+    maxCol += n;
+    updateCanvasBox();
+  }
+
+  function trimTopRows(n){
+    n = Math.min(n, maxRow - minRow); // always keep at least one row
+    if(n <= 0) return;
+    for(var i=0;i<n;i++){
+      for(var c = minCol; c <= maxCol; c++) removeCell(minRow, c);
+      minRow++;
+    }
+    for(var k in cellMap){
+      cellMap[k].style.top = ((+cellMap[k].dataset.row - minRow) * CELL + BUBBLE_MARGIN) + 'px';
+    }
+    updateCanvasBox();
+    sheet.scrollTop -= n * CELL;
+  }
+
+  function trimLeftCols(n){
+    n = Math.min(n, maxCol - minCol);
+    if(n <= 0) return;
+    for(var i=0;i<n;i++){
+      for(var r = minRow; r <= maxRow; r++) removeCell(r, minCol);
+      minCol++;
+    }
+    for(var k in cellMap){
+      cellMap[k].style.left = ((+cellMap[k].dataset.col - minCol) * CELL + BUBBLE_MARGIN) + 'px';
+    }
+    updateCanvasBox();
+    sheet.scrollLeft -= n * CELL;
   }
 
   function buildGrid(){
-    sheet.innerHTML = '';
-    bubbles = [];
-    cols = Math.max(1, Math.floor(sheet.clientWidth / CELL));
+    canvas.innerHTML = '';
+    cellMap = Object.create(null);
+    var visibleCols = Math.max(1, Math.floor(sheet.clientWidth / CELL));
     var visibleRows = Math.max(1, Math.ceil(sheet.clientHeight / CELL)) + 1;
-    appendRows(visibleRows + ROWS_PER_CHUNK * 2);
+    var initRows = visibleRows + ROWS_PER_CHUNK * 2;
+    var initCols = visibleCols + COLS_PER_CHUNK * 2;
+    MAX_ROWS_CAP = initRows + ROWS_PER_CHUNK * 3;
+    MAX_COLS_CAP = initCols + COLS_PER_CHUNK * 3;
+    minRow = 0; maxRow = initRows - 1;
+    minCol = 0; maxCol = initCols - 1;
+    for(var r = minRow; r <= maxRow; r++){
+      for(var c = minCol; c <= maxCol; c++) addCell(r, c);
+    }
+    updateCanvasBox();
+    sheet.scrollTop = 0;
+    sheet.scrollLeft = 0;
   }
 
   var scrollTicking = false;
@@ -472,10 +535,15 @@
     scrollTicking = true;
     requestAnimationFrame(function(){
       scrollTicking = false;
-      var threshold = CELL * ROWS_PER_CHUNK * 1.5;
-      if(sheet.scrollTop + sheet.clientHeight > sheet.scrollHeight - threshold){
-        appendRows(ROWS_PER_CHUNK);
-        trimTop();
+      var threshY = CELL * ROWS_PER_CHUNK * 1.5;
+      if(sheet.scrollTop + sheet.clientHeight > sheet.scrollHeight - threshY){
+        growDown(ROWS_PER_CHUNK);
+        if(maxRow - minRow + 1 > MAX_ROWS_CAP) trimTopRows(ROWS_PER_CHUNK);
+      }
+      var threshX = CELL * COLS_PER_CHUNK * 1.5;
+      if(sheet.scrollLeft + sheet.clientWidth > sheet.scrollWidth - threshX){
+        growRight(COLS_PER_CHUNK);
+        if(maxCol - minCol + 1 > MAX_COLS_CAP) trimLeftCols(COLS_PER_CHUNK);
       }
     });
   });
