@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>プチプチDELUXE - 無限に潰せるバブルラップ</title>
+<meta name="description" content="無限にプチプチを潰し続けられるバブルラップ緩衝材シミュレーター。押すたびに気持ちいい音が鳴り、潰した数はずっと記録される。">
+<link rel="canonical" href="https://kaikomziu.github.io/puchipuchi-deluxe/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="プチプチDELUXE - 無限に潰せるバブルラップ">
+<meta property="og:description" content="無限にプチプチを潰し続けられるバブルラップ緩衝材シミュレーター。押すたびに気持ちいい音が鳴り、潰した数はずっと記録される。">
+<meta property="og:url" content="https://kaikomziu.github.io/puchipuchi-deluxe/">
+<meta name="twitter:card" content="summary">
+<style>
+  :root{
+    --bg1:#0f1226; --bg2:#1b2148; --ink:#eaf0ff; --sub:#9aa6d4;
+    --accent:#5df2c4; --accent2:#ffd24d;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;
+    -webkit-user-select:none; user-select:none;}
+  html,body{height:100%; overscroll-behavior:none;}
+  body{
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
+    background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg1) 70%);
+    color:var(--ink); overflow:hidden; touch-action:none;
+    display:flex; flex-direction:column; height:100dvh;
+  }
+
+  header{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 18px; flex:0 0 auto;
+  }
+  .title{display:flex; flex-direction:column; gap:2px;}
+  .title h1{font-size:clamp(18px,4.5vw,26px); letter-spacing:.06em; line-height:1;
+    text-shadow:0 0 18px rgba(93,242,196,.35);}
+  .title .sub{font-size:10.5px; letter-spacing:.18em; color:var(--sub);}
+
+  .stats{display:flex; align-items:center; gap:14px;}
+  .count-box{text-align:right; line-height:1.2;}
+  .count-box .num{font-size:clamp(18px,4vw,24px); font-weight:800; color:var(--accent2);
+    text-shadow:0 0 14px rgba(255,210,77,.35); font-variant-numeric:tabular-nums;}
+  .count-box .lbl{font-size:9.5px; letter-spacing:.14em; color:var(--sub);}
+
+  .iconbtn{
+    width:38px; height:38px; border-radius:50%; border:none; cursor:pointer;
+    background:rgba(255,255,255,.06); box-shadow:inset 0 0 0 1.5px rgba(154,166,212,.3);
+    color:var(--ink); font-size:17px; display:flex; align-items:center; justify-content:center;
+    transition:transform .1s, background .15s;
+  }
+  .iconbtn:active{transform:scale(.9);}
+  .iconbtn.off{color:var(--sub); opacity:.55;}
+
+  main{
+    flex:1 1 auto; position:relative; overflow:hidden;
+    margin:0 10px 10px; border-radius:20px;
+    background:linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+  }
+
+  #sheet{
+    position:absolute; inset:0;
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(var(--cell,44px), 1fr));
+    grid-auto-rows:var(--cell,44px);
+    padding:8px; gap:0;
+  }
+
+  .bubble{
+    position:relative; margin:auto; width:78%; aspect-ratio:1; border-radius:50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,.95), rgba(255,255,255,.18) 38%, rgba(140,180,255,.4) 68%, rgba(90,125,225,.28) 100%);
+    box-shadow:
+      inset -3px -3px 5px rgba(20,30,70,.35),
+      inset 2px 2px 4px rgba(255,255,255,.55),
+      0 2px 2px rgba(0,0,0,.18);
+    transition:transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .18s, background .18s;
+    cursor:pointer;
+  }
+  .bubble::after{
+    content:""; position:absolute; inset:-30%; border-radius:50%;
+    border:2px solid var(--accent); opacity:0; transform:scale(.5); pointer-events:none;
+  }
+  .bubble.pop-anim::after{ animation:ring .45s ease-out forwards; }
+  @keyframes ring{
+    0%{opacity:.65; transform:scale(.4);}
+    100%{opacity:0; transform:scale(1.5);}
+  }
+
+  .bubble[data-popped="1"]{
+    transform:scale(.74);
+    background:
+      radial-gradient(circle at 38% 34%, rgba(255,255,255,.12), rgba(90,110,165,.35) 55%, rgba(45,55,100,.5) 100%);
+    box-shadow:
+      inset 2px 2px 5px rgba(0,0,0,.45),
+      inset -1px -1px 2px rgba(255,255,255,.08);
+  }
+
+  .hint{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    font-size:13px; color:var(--sub); letter-spacing:.1em; text-align:center;
+    pointer-events:none; transition:opacity .5s; line-height:1.9;
+  }
+  .hint.hidden{opacity:0;}
+
+  footer{
+    flex:0 0 auto; text-align:center; padding:6px 0 10px; font-size:10px;
+    color:var(--sub); letter-spacing:.08em; opacity:.55;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">
+    <h1>プチプチ<span style="color:var(--accent)">DELUXE</span></h1>
+    <div class="sub">無限バブルラップ</div>
+  </div>
+  <div class="stats">
+    <div class="count-box">
+      <div class="num" id="countNum">0</div>
+      <div class="lbl">累計プチ数</div>
+    </div>
+    <button class="iconbtn" id="soundBtn" title="音のON/OFF">🔊</button>
+  </div>
+</header>
+
+<main>
+  <div id="sheet"></div>
+  <div class="hint" id="hint">なぞる・タップで<br>プチッと潰そう</div>
+</main>
+
+<footer>破れても大丈夫。時間が経つとまたプチプチできるようになるよ</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  var sheet = document.getElementById('sheet');
+  var hint = document.getElementById('hint');
+  var countNum = document.getElementById('countNum');
+  var soundBtn = document.getElementById('soundBtn');
+
+  var STORAGE_COUNT = 'puchipuchi_deluxe_total';
+  var STORAGE_MUTE = 'puchipuchi_deluxe_muted';
+
+  var total = 0;
+  try { total = parseInt(localStorage.getItem(STORAGE_COUNT), 10) || 0; } catch(e){}
+  var muted = false;
+  try { muted = localStorage.getItem(STORAGE_MUTE) === '1'; } catch(e){}
+
+  function renderCount(){ countNum.textContent = total.toLocaleString('ja-JP'); }
+  function renderMute(){
+    soundBtn.textContent = muted ? '🔇' : '🔊';
+    soundBtn.classList.toggle('off', muted);
+  }
+  renderCount(); renderMute();
+
+  soundBtn.addEventListener('click', function(){
+    muted = !muted;
+    try { localStorage.setItem(STORAGE_MUTE, muted ? '1' : '0'); } catch(e){}
+    renderMute();
+    if(!muted) ensureAudio();
+  });
+
+  // ---- Audio ----
+  var ctx = null, master = null;
+  function ensureAudio(){
+    if(ctx) { if(ctx.state === 'suspended') ctx.resume(); return; }
+    try{
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      master = ctx.createGain();
+      master.gain.value = 0.8;
+      master.connect(ctx.destination);
+    }catch(e){ ctx = null; }
+  }
+
+  function playPop(){
+    if(muted) return;
+    ensureAudio();
+    if(!ctx) return;
+    var t = ctx.currentTime;
+
+    var o = ctx.createOscillator();
+    var g = ctx.createGain();
+    o.type = 'sine';
+    var base = 520 + Math.random()*260;
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(60, base*0.26), t+0.085);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55, t+0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.1);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t+0.11);
+
+    var bufSize = Math.floor(ctx.sampleRate*0.02);
+    var buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    var data = buf.getChannelData(0);
+    for(var i=0;i<bufSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufSize); }
+    var noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    var bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 1500 + Math.random()*800; bp.Q.value = 1.1;
+    var ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.18, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t+0.035);
+    noise.connect(bp); bp.connect(ng); ng.connect(master);
+    noise.start(t);
+  }
+
+  // ---- Grid ----
+  var CELL = 44;
+  var bubbles = [];
+
+  function buildGrid(){
+    sheet.innerHTML = '';
+    bubbles = [];
+    var w = sheet.clientWidth, h = sheet.clientHeight;
+    var cols = Math.max(1, Math.floor(w / CELL));
+    var rows = Math.max(1, Math.ceil(h / CELL)) + 1;
+    var count = cols * rows;
+    var frag = document.createDocumentFragment();
+    for(var i=0;i<count;i++){
+      var b = document.createElement('div');
+      b.className = 'bubble';
+      b.dataset.popped = '0';
+      frag.appendChild(b);
+      bubbles.push(b);
+    }
+    sheet.appendChild(frag);
+  }
+
+  function pop(el){
+    if(!el || el.dataset.popped === '1') return;
+    el.dataset.popped = '1';
+    el.classList.remove('pop-anim');
+    void el.offsetWidth;
+    el.classList.add('pop-anim');
+    playPop();
+    if(navigator.vibrate) { try{ navigator.vibrate(9); }catch(e){} }
+
+    total++;
+    renderCount();
+    try { localStorage.setItem(STORAGE_COUNT, String(total)); } catch(e){}
+
+    if(!hint.classList.contains('hidden')) hint.classList.add('hidden');
+
+    var delay = 700 + Math.random()*1900;
+    setTimeout(function(){
+      el.dataset.popped = '0';
+    }, delay);
+  }
+
+  var dragging = false;
+
+  function handlePointer(e){
+    var el = e.target;
+    if(el && el.classList && el.classList.contains('bubble')) pop(el);
+  }
+
+  sheet.addEventListener('pointerdown', function(e){
+    dragging = true;
+    ensureAudio();
+    handlePointer(e);
+  });
+  sheet.addEventListener('pointermove', function(e){
+    if(dragging) handlePointer(e);
+  });
+  window.addEventListener('pointerup', function(){ dragging = false; });
+  window.addEventListener('pointercancel', function(){ dragging = false; });
+  window.addEventListener('blur', function(){ dragging = false; });
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(buildGrid, 200);
+  });
+
+  buildGrid();
+})();
+</script>
+</body>
+</html>
