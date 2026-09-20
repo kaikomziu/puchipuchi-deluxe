@@ -22,7 +22,7 @@
   body{
     font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
     background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg1) 70%);
-    color:var(--ink); overflow:hidden; touch-action:none;
+    color:var(--ink); overflow:hidden; touch-action:manipulation;
     display:flex; flex-direction:column; height:100dvh;
   }
 
@@ -83,6 +83,24 @@
     grid-template-columns:repeat(auto-fill, minmax(var(--cell,44px), 1fr));
     grid-auto-rows:var(--cell,44px);
     padding:8px; gap:0;
+    overflow-y:auto; overflow-x:hidden;
+    touch-action:pan-y;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  #sheet::-webkit-scrollbar{ display:none; }
+
+  .scroll-cue{
+    position:absolute; left:50%; bottom:10px; transform:translateX(-50%);
+    font-size:11px; color:var(--sub); letter-spacing:.08em; text-align:center;
+    pointer-events:none; transition:opacity .5s; opacity:.8; z-index:3;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  .scroll-cue.hidden{opacity:0;}
+  .scroll-cue .arrow{ animation:bob 1.4s ease-in-out infinite; font-size:14px; }
+  @keyframes bob{
+    0%,100%{ transform:translateY(0); }
+    50%{ transform:translateY(5px); }
   }
 
   .bubble{
@@ -164,6 +182,7 @@
 <main>
   <div id="sheet"></div>
   <div class="hint" id="hint">なぞる・タップで<br>プチッと潰そう</div>
+  <div class="scroll-cue" id="scrollCue"><span>スクロールでもっと広がる</span><span class="arrow">▼</span></div>
 </main>
 
 <footer>破れても大丈夫。時間が経つとまたプチプチできるようになるよ</footer>
@@ -175,6 +194,7 @@
   var sheet = document.getElementById('sheet');
   var mainEl = document.querySelector('main');
   var hint = document.getElementById('hint');
+  var scrollCue = document.getElementById('scrollCue');
   var countNum = document.getElementById('countNum');
   var soundBtn = document.getElementById('soundBtn');
   var voiceBtn = document.getElementById('voiceBtn');
@@ -395,32 +415,70 @@
     SOUND_PRESETS[soundIndex].fn(t, vel);
   }
 
-  // ---- Grid ----
+  // ---- Grid: infinite in both time (popped bubbles re-inflate) and space (scroll spawns more rows) ----
   var CELL = 44;
+  var ROWS_PER_CHUNK = 6;
+  var MAX_BUBBLES = 42 * 16; // trim old rows from the top once the sheet grows past this
   var bubbles = [];
+  var cols = 1;
 
-  function buildGrid(){
-    sheet.innerHTML = '';
-    bubbles = [];
-    var w = sheet.clientWidth, h = sheet.clientHeight;
-    var cols = Math.max(1, Math.floor(w / CELL));
-    var rows = Math.max(1, Math.ceil(h / CELL)) + 1;
-    var count = cols * rows;
+  function makeBubble(){
+    var b = document.createElement('div');
+    b.className = 'bubble';
+    b.dataset.popped = '0';
+    var tilt = (Math.random()*10 - 5).toFixed(1);
+    b.dataset.tilt = tilt;
+    b.style.setProperty('--tilt', tilt + 'deg');
+    b.style.setProperty('--hx', (22 + Math.random()*24).toFixed(0) + '%');
+    b.style.setProperty('--hy', (16 + Math.random()*24).toFixed(0) + '%');
+    return b;
+  }
+
+  function appendRows(rowCount){
     var frag = document.createDocumentFragment();
-    for(var i=0;i<count;i++){
-      var b = document.createElement('div');
-      b.className = 'bubble';
-      b.dataset.popped = '0';
-      var tilt = (Math.random()*10 - 5).toFixed(1);
-      b.dataset.tilt = tilt;
-      b.style.setProperty('--tilt', tilt + 'deg');
-      b.style.setProperty('--hx', (22 + Math.random()*24).toFixed(0) + '%');
-      b.style.setProperty('--hy', (16 + Math.random()*24).toFixed(0) + '%');
+    for(var i=0;i<rowCount*cols;i++){
+      var b = makeBubble();
       frag.appendChild(b);
       bubbles.push(b);
     }
     sheet.appendChild(frag);
   }
+
+  function trimTop(){
+    while(bubbles.length > MAX_BUBBLES){
+      var removed = sheet.scrollTop;
+      for(var i=0;i<cols && bubbles.length>0;i++){
+        var b = bubbles.shift();
+        if(b._squishAnim) b._squishAnim.cancel();
+        if(b._timer) clearTimeout(b._timer);
+        b.remove();
+      }
+      sheet.scrollTop = removed - CELL;
+    }
+  }
+
+  function buildGrid(){
+    sheet.innerHTML = '';
+    bubbles = [];
+    cols = Math.max(1, Math.floor(sheet.clientWidth / CELL));
+    var visibleRows = Math.max(1, Math.ceil(sheet.clientHeight / CELL)) + 1;
+    appendRows(visibleRows + ROWS_PER_CHUNK * 2);
+  }
+
+  var scrollTicking = false;
+  sheet.addEventListener('scroll', function(){
+    if(!scrollCue.classList.contains('hidden')) scrollCue.classList.add('hidden');
+    if(scrollTicking) return;
+    scrollTicking = true;
+    requestAnimationFrame(function(){
+      scrollTicking = false;
+      var threshold = CELL * ROWS_PER_CHUNK * 1.5;
+      if(sheet.scrollTop + sheet.clientHeight > sheet.scrollHeight - threshold){
+        appendRows(ROWS_PER_CHUNK);
+        trimTop();
+      }
+    });
+  });
 
   function spawnParticles(el){
     var rect = el.getBoundingClientRect();
@@ -511,7 +569,7 @@
     if(!hint.classList.contains('hidden')) hint.classList.add('hidden');
 
     var delay = 700 + Math.random()*1900;
-    setTimeout(function(){
+    el._timer = setTimeout(function(){
       el.dataset.popped = '0';
       if(el._squishAnim) el._squishAnim.cancel();
       el._squishAnim = el.animate([
