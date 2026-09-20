@@ -50,6 +50,26 @@
   .iconbtn:active{transform:scale(.9);}
   .iconbtn.off{color:var(--sub); opacity:.55;}
 
+  .sound-wrap{position:relative;}
+  .sound-panel{
+    position:absolute; top:46px; right:0; z-index:10;
+    display:flex; flex-direction:column; gap:5px;
+    background:#171b3a; padding:8px; border-radius:14px; min-width:150px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5), inset 0 0 0 1px rgba(154,166,212,.18);
+    opacity:0; transform:translateY(-6px) scale(.96); pointer-events:none;
+    transition:opacity .15s, transform .15s;
+  }
+  .sound-panel.open{opacity:1; transform:translateY(0) scale(1); pointer-events:auto;}
+  .sound-opt{
+    display:flex; align-items:center; gap:8px; text-align:left;
+    border:none; cursor:pointer; padding:8px 10px; border-radius:9px;
+    background:transparent; color:var(--sub); font-size:12.5px; letter-spacing:.03em;
+    font-family:inherit;
+  }
+  .sound-opt .sw{width:18px; text-align:center;}
+  .sound-opt.active{background:rgba(93,242,196,.14); color:var(--ink); font-weight:700;}
+  .sound-opt:active{transform:scale(.97);}
+
   main{
     flex:1 1 auto; position:relative; overflow:hidden;
     margin:0 10px 10px; border-radius:20px;
@@ -120,6 +140,10 @@
       <div class="num" id="countNum">0</div>
       <div class="lbl">累計プチ数</div>
     </div>
+    <div class="sound-wrap">
+      <button class="iconbtn" id="voiceBtn" title="音色を選ぶ">🎵</button>
+      <div class="sound-panel" id="soundPanel"></div>
+    </div>
     <button class="iconbtn" id="soundBtn" title="音のON/OFF">🔊</button>
   </div>
 </header>
@@ -139,9 +163,12 @@
   var hint = document.getElementById('hint');
   var countNum = document.getElementById('countNum');
   var soundBtn = document.getElementById('soundBtn');
+  var voiceBtn = document.getElementById('voiceBtn');
+  var soundPanel = document.getElementById('soundPanel');
 
   var STORAGE_COUNT = 'puchipuchi_deluxe_total';
   var STORAGE_MUTE = 'puchipuchi_deluxe_muted';
+  var STORAGE_SOUND = 'puchipuchi_deluxe_soundset';
 
   var total = 0;
   try { total = parseInt(localStorage.getItem(STORAGE_COUNT), 10) || 0; } catch(e){}
@@ -174,37 +201,184 @@
     }catch(e){ ctx = null; }
   }
 
+  function makeNoiseBuffer(durSec, shape){
+    var size = Math.max(1, Math.floor(ctx.sampleRate * durSec));
+    var buf = ctx.createBuffer(1, size, ctx.sampleRate);
+    var data = buf.getChannelData(0);
+    for(var i=0;i<size;i++){
+      var x = i / size;
+      var env = shape ? shape(x) : (1 - x);
+      data[i] = (Math.random()*2 - 1) * env;
+    }
+    return buf;
+  }
+
+  // ---- Sound presets: each takes (t, vel) and builds its own node graph into `master` ----
+
+  function popReal(t, vel){
+    // crack: ultra-short broadband transient -- the initial "snap" of the plastic
+    var click = ctx.createBufferSource();
+    click.buffer = makeNoiseBuffer(0.006, function(x){ return Math.pow(1-x, 6); });
+    var clickHP = ctx.createBiquadFilter();
+    clickHP.type = 'highpass'; clickHP.frequency.value = 2000;
+    var clickGain = ctx.createGain();
+    clickGain.gain.value = 0.7 * vel;
+    click.connect(clickHP); clickHP.connect(clickGain); clickGain.connect(master);
+    click.start(t);
+
+    // body: short bandpassed noise burst -- the main plasticky "pop" resonance,
+    // randomized center frequency each time so repeated pops don't sound identical
+    var dur = 0.03 + Math.random()*0.025;
+    var body = ctx.createBufferSource();
+    body.buffer = makeNoiseBuffer(dur, function(x){ return Math.pow(1-x, 2.4); });
+    var bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 900 + Math.random()*2000;
+    bp.Q.value = 1.6 + Math.random()*1.8;
+    var bodyHP = ctx.createBiquadFilter();
+    bodyHP.type = 'highpass'; bodyHP.frequency.value = 350;
+    var bodyGain = ctx.createGain();
+    bodyGain.gain.value = 0.85 * vel;
+    body.connect(bp); bp.connect(bodyHP); bodyHP.connect(bodyGain); bodyGain.connect(master);
+    body.start(t);
+
+    // thump: brief low-frequency thud giving the pop some physical weight
+    var thump = ctx.createOscillator();
+    thump.type = 'sine';
+    var thumpFreq = 85 + Math.random()*50;
+    thump.frequency.setValueAtTime(thumpFreq, t);
+    thump.frequency.exponentialRampToValueAtTime(thumpFreq*0.55, t+0.045);
+    var thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(0.001, t);
+    thumpGain.gain.exponentialRampToValueAtTime(0.32*vel, t+0.003);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, t+0.055);
+    thump.connect(thumpGain); thumpGain.connect(master);
+    thump.start(t); thump.stop(t+0.06);
+  }
+
+  function popSoft(t, vel){
+    // muffled, gentle, like popping wrapped in a blanket
+    var dur = 0.07 + Math.random()*0.03;
+    var body = ctx.createBufferSource();
+    body.buffer = makeNoiseBuffer(dur, function(x){ return Math.pow(1-x, 1.6); });
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 380 + Math.random()*220; bp.Q.value = 0.9;
+    var g = ctx.createGain(); g.gain.value = 0.7 * vel;
+    body.connect(lp); lp.connect(bp); bp.connect(g); g.connect(master);
+    body.start(t);
+
+    var thump = ctx.createOscillator(); thump.type = 'sine';
+    var tf = 65 + Math.random()*30;
+    thump.frequency.setValueAtTime(tf, t);
+    thump.frequency.exponentialRampToValueAtTime(tf*0.6, t+0.09);
+    var thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(0.001, t);
+    thumpGain.gain.exponentialRampToValueAtTime(0.4*vel, t+0.008);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, t+0.11);
+    thump.connect(thumpGain); thumpGain.connect(master);
+    thump.start(t); thump.stop(t+0.12);
+  }
+
+  function popCrisp(t, vel){
+    // sharp, high, very short -- パリッと
+    var click = ctx.createBufferSource();
+    click.buffer = makeNoiseBuffer(0.014, function(x){ return Math.pow(1-x, 4); });
+    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2800;
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200 + Math.random()*1800; bp.Q.value = 2.2;
+    var g = ctx.createGain(); g.gain.value = 0.9 * vel;
+    click.connect(hp); hp.connect(bp); bp.connect(g); g.connect(master);
+    click.start(t);
+  }
+
+  function popRetro(t, vel){
+    // 8bit chiptune blip
+    var o = ctx.createOscillator(); o.type = 'square';
+    var base = 700 + Math.random()*300;
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(base*0.35, t+0.05);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.28*vel, t+0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.07);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t+0.08);
+  }
+
+  function popDeep(t, vel){
+    // weighty, low, satisfying -- ずっしり
+    var dur = 0.09 + Math.random()*0.03;
+    var body = ctx.createBufferSource();
+    body.buffer = makeNoiseBuffer(dur, function(x){ return Math.pow(1-x, 1.8); });
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650;
+    var g = ctx.createGain(); g.gain.value = 0.55 * vel;
+    body.connect(lp); lp.connect(g); g.connect(master);
+    body.start(t);
+
+    var thump = ctx.createOscillator(); thump.type = 'sine';
+    var tf = 55 + Math.random()*25;
+    thump.frequency.setValueAtTime(tf, t);
+    thump.frequency.exponentialRampToValueAtTime(tf*0.5, t+0.13);
+    var thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(0.001, t);
+    thumpGain.gain.exponentialRampToValueAtTime(0.5*vel, t+0.01);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+    thump.connect(thumpGain); thumpGain.connect(master);
+    thump.start(t); thump.stop(t+0.17);
+  }
+
+  var SOUND_PRESETS = [
+    { id:'real',  emoji:'🫧', name:'リアル',   fn:popReal },
+    { id:'soft',  emoji:'☁️', name:'ソフト',   fn:popSoft },
+    { id:'crisp', emoji:'✨', name:'パリッと', fn:popCrisp },
+    { id:'retro', emoji:'🕹️', name:'レトロ',   fn:popRetro },
+    { id:'deep',  emoji:'🌊', name:'ずっしり', fn:popDeep }
+  ];
+
+  var soundIndex = 0;
+  try {
+    var savedSoundId = localStorage.getItem(STORAGE_SOUND);
+    var savedIdx = -1;
+    for(var si=0; si<SOUND_PRESETS.length; si++){ if(SOUND_PRESETS[si].id === savedSoundId) savedIdx = si; }
+    if(savedIdx >= 0) soundIndex = savedIdx;
+  } catch(e){}
+
+  function renderSoundPanel(){
+    soundPanel.innerHTML = '';
+    SOUND_PRESETS.forEach(function(p, i){
+      var b = document.createElement('button');
+      b.className = 'sound-opt' + (i === soundIndex ? ' active' : '');
+      b.innerHTML = '<span class="sw">'+p.emoji+'</span><span>'+p.name+'</span>';
+      b.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        soundIndex = i;
+        try { localStorage.setItem(STORAGE_SOUND, p.id); } catch(e){}
+        renderSoundPanel();
+        soundPanel.classList.remove('open');
+        ensureAudio();
+        if(!muted && ctx) SOUND_PRESETS[i].fn(ctx.currentTime, 1);
+      });
+      soundPanel.appendChild(b);
+    });
+  }
+  renderSoundPanel();
+
+  voiceBtn.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    soundPanel.classList.toggle('open');
+  });
+  document.addEventListener('click', function(ev){
+    if(!soundPanel.contains(ev.target) && ev.target !== voiceBtn){
+      soundPanel.classList.remove('open');
+    }
+  });
+
   function playPop(){
     if(muted) return;
     ensureAudio();
     if(!ctx) return;
     var t = ctx.currentTime;
-
-    var o = ctx.createOscillator();
-    var g = ctx.createGain();
-    o.type = 'sine';
-    var base = 520 + Math.random()*260;
-    o.frequency.setValueAtTime(base, t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(60, base*0.26), t+0.085);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.55, t+0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, t+0.1);
-    o.connect(g); g.connect(master);
-    o.start(t); o.stop(t+0.11);
-
-    var bufSize = Math.floor(ctx.sampleRate*0.02);
-    var buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
-    var data = buf.getChannelData(0);
-    for(var i=0;i<bufSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufSize); }
-    var noise = ctx.createBufferSource();
-    noise.buffer = buf;
-    var bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass'; bp.frequency.value = 1500 + Math.random()*800; bp.Q.value = 1.1;
-    var ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.18, t);
-    ng.gain.exponentialRampToValueAtTime(0.0001, t+0.035);
-    noise.connect(bp); bp.connect(ng); ng.connect(master);
-    noise.start(t);
+    var vel = 0.85 + Math.random()*0.3;
+    SOUND_PRESETS[soundIndex].fn(t, vel);
   }
 
   // ---- Grid ----
